@@ -27,7 +27,7 @@ create/read/update/delete operations.
 | Member | Primary Responsibility | Contribution to Database | Contribution to Application |
 |--------|------------------------|--------------------------|------------------------------|
 | **Aadish Sarin (PES2UG24CS007)** | Database design & backend | ER modelling, relational schema, DDL, stored procedures, triggers, pgvector setup, embedding pipeline | Next.js API routes (route handlers), DB integration, auth/RBAC |
-| **[Team Member 2 – Name / SRN]** | Application & UI | Views, indexing, query optimization, data-validation constraints, seed data | Next.js frontend (dashboards, complaint forms, officer console), testing |
+| **Aditya Alur (PES2UG24CS052)** | Application & UI | Views, indexing, query optimization, data-validation constraints, seed data | Next.js frontend (dashboards, complaint forms, officer console), testing |
 
 Both members contribute to **both** database and application development, as required.
 
