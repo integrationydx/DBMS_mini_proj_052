@@ -33,7 +33,33 @@ Both members contribute to **both** database and application development, as req
 
 ---
 
-## 3. Database Requirement
+## 3. Abstract
+
+CivicResolve is a smart civic grievance management platform for urban local bodies. It
+allows residents to submit complaints and gives administrators a single dashboard to
+track, assign, and resolve them. Structured information such as users, wards,
+departments, complaint status, assignments, and audit history is stored in PostgreSQL
+with primary keys, foreign keys, constraints, indexes, and views. Complaint title and
+description are converted into 384-dimensional embeddings and searched with pgvector
+or Qdrant to detect semantically similar reports. This reduces duplicate tickets,
+improves department routing, and provides measurable SLA and resolution reporting.
+
+## 4. Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| Frontend | Next.js 16, React 19, TypeScript | Responsive administrator dashboard, complaint form, filters, activity charts |
+| UI | CSS, Lucide React | Accessible layout, responsive styling, icons and visual status indicators |
+| Relational database | PostgreSQL 15+ | Transactional civic data, relationships, constraints, views and audit history |
+| Vector database | pgvector or Qdrant | 384-dimensional complaint embeddings and cosine similarity search |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Local text embeddings for deduplication and routing |
+| Development | Node.js 20+, npm | Local development and production build |
+
+The included frontend currently uses representative mock data so that it can be
+demonstrated without credentials or a running database. The database boundary is kept
+ready for connecting the API routes to PostgreSQL and the vector service.
+
+## 5. Database Requirement
 
 **Chosen option: Option 2 — SQL + Vector Database.**
 
@@ -58,7 +84,7 @@ technology demonstration.
 
 ---
 
-## 4. Database Design
+## 6. Database Design
 
 ### 4.1 Entities and Attributes (SQL side)
 
@@ -259,7 +285,7 @@ audit_log(log_id PK, user_id FK→app_user, action, entity, entity_id, created_a
 
 ---
 
-## 5. SQL Implementation (DDL)
+## 7. SQL Implementation (DDL)
 
 > PostgreSQL. Demonstrates `CREATE`, `ALTER`, `DROP`, primary/foreign keys,
 > constraints, indexes, a view, and the pgvector extension.
@@ -472,6 +498,154 @@ ORDER BY open_complaints DESC;
 
 ---
 
-*Points 6–18 (DML operations, the 4+ advanced features — trigger for SLA
-auto-escalation, stored procedure for atomic duplicate-merge, transactions, vector
-similarity search — Next.js UI, auth/RBAC, etc.) will be completed in the next phase.*
+## 8. SQL Database Commands
+
+The following commands demonstrate representative DML, joins, aggregation, a
+transaction, and the reporting view. They can be run after the PostgreSQL DDL above.
+
+```sql
+-- Seed lookup data
+INSERT INTO role (role_name) VALUES ('CITIZEN'), ('OFFICER'), ('ADMIN');
+INSERT INTO ward (ward_number, ward_name, zone)
+VALUES (7, 'Jayanagar East', 'South'), (11, 'Malleshwaram', 'West');
+INSERT INTO department (dept_name, description)
+VALUES ('Roads', 'Road maintenance and pothole repair'),
+       ('Sanitation', 'Waste collection and public cleanliness'),
+       ('Water supply', 'Pipelines and leakage response');
+
+-- Insert a complaint and use a transaction for assignment
+BEGIN;
+INSERT INTO complaint (title, description, citizen_id, ward_id, category_id, priority)
+VALUES ('Streetlight not working near 5th Cross',
+        'The lamp post has been dark for three nights.', 1, 1, 1, 'HIGH')
+RETURNING complaint_id;
+INSERT INTO assignment (complaint_id, officer_id, assigned_by)
+VALUES (currval('complaint_complaint_id_seq'), 2, 3);
+INSERT INTO status_history (complaint_id, old_status, new_status, changed_by, remarks)
+VALUES (currval('complaint_complaint_id_seq'), 'OPEN', 'ASSIGNED', 3,
+        'Routed to the electricity officer');
+COMMIT;
+
+-- Search open complaints by department and ward
+SELECT c.complaint_id, c.title, d.dept_name, c.status, c.priority
+FROM complaint c
+JOIN category cat ON cat.category_id = c.category_id
+JOIN department d ON d.department_id = cat.department_id
+WHERE c.status IN ('OPEN', 'ASSIGNED', 'IN_PROGRESS')
+  AND c.ward_id = 1
+ORDER BY c.priority DESC, c.created_at DESC;
+
+-- Aggregation/reporting
+SELECT status, COUNT(*) AS complaint_count
+FROM complaint
+GROUP BY status
+ORDER BY complaint_count DESC;
+
+SELECT * FROM v_department_open_load;
+```
+
+## 9. NoSQL / Vector Database Commands
+
+The vector layer stores complaint embeddings separately from the normalized
+transactional records. The following Qdrant commands are the physically separate
+NoSQL/vector alternative documented by this project.
+
+```bash
+# Start Qdrant locally
+docker run -p 6333:6333 qdrant/qdrant
+
+# Create a collection for 384-dimensional MiniLM embeddings
+curl -X PUT 'http://localhost:6333/collections/complaints' \
+  -H 'Content-Type: application/json' \
+  -d '{"vectors":{"size":384,"distance":"Cosine"}}'
+
+# Upsert an embedding and searchable metadata payload
+curl -X PUT 'http://localhost:6333/collections/complaints/points' \
+  -H 'Content-Type: application/json' \
+  -d '{"points":[{"id":1042,"vector":[0.021,-0.114,0.008],
+       "payload":{"complaint_id":1042,"ward_id":7,"category_id":3,
+                  "status":"OPEN","title":"Streetlight not working"}}]}'
+
+# Search for semantic duplicates in the same ward
+curl -X POST 'http://localhost:6333/collections/complaints/points/search' \
+  -H 'Content-Type: application/json' \
+  -d '{"vector":[0.021,-0.114,0.008],"limit":5,"with_payload":true,
+       "filter":{"must":[{"key":"ward_id","match":{"value":7}}]}}'
+```
+
+With pgvector instead of Qdrant, the equivalent query is:
+
+```sql
+INSERT INTO complaint_vector (complaint_id, embedding)
+VALUES (1042, '[0.021,-0.114,0.008,...]'::vector);
+
+SELECT complaint_id, 1 - (embedding <=> '[0.021,-0.114,0.008,...]'::vector)
+       AS cosine_similarity
+FROM complaint_vector
+ORDER BY embedding <=> '[0.021,-0.114,0.008,...]'::vector
+LIMIT 5;
+```
+
+## 10. Next.js Project Tree
+
+```text
+DBMS_Mini_Project/
+├── app/
+│   ├── globals.css          # responsive dashboard and modal styles
+│   ├── layout.tsx           # metadata and root layout
+│   └── page.tsx             # dashboard, filters, complaint form and charts
+├── public/
+│   └── screenshots/
+│       ├── dashboard-preview.svg
+│       └── code-preview.svg
+├── CivicResolve_MySQL_DDL.sql
+├── CivicResolve_DBMS_Level3_Submission.md
+├── Relational_schema.png
+├── next.config.mjs
+├── next-env.d.ts
+├── package.json
+└── tsconfig.json
+```
+
+Run the frontend locally:
+
+```bash
+npm install
+npm run dev
+# open http://localhost:3000
+```
+
+The dashboard supports navigation state, complaint searching/filtering,
+notifications, marking a complaint resolved, and submitting a new complaint through
+the modal form. The interface is responsive for desktop, tablet, and mobile layouts.
+
+## 11. Application Code and Demo Screenshots
+
+### Dashboard demo
+
+![CivicResolve dashboard preview](public/screenshots/dashboard-preview.svg)
+
+The live version is implemented in [`app/page.tsx`](app/page.tsx). It includes summary
+cards, complaint status badges, an activity chart, category distribution, a hotspot
+map preview, and a working “New complaint” flow.
+
+### Frontend application code
+
+![CivicResolve Next.js code preview](public/screenshots/code-preview.svg)
+
+The screenshot shows the Next.js client component, typed complaint model, React state,
+and complaint submission flow. The SVG assets are included in the repository so the
+report renders on GitHub without requiring a running development server.
+
+## 12. Completion Checklist
+
+| Required item | Location |
+|---|---|
+| Title | Sections 1 and 2 |
+| Students’ SRN and names | Section 2 |
+| Abstract | Section 3 |
+| Tech stack | Section 4 |
+| SQL database commands | Sections 7 and 8 |
+| NoSQL/vector commands | Section 9 |
+| Next.js project tree | Section 10 |
+| Application and demo screenshots | Section 11 |
